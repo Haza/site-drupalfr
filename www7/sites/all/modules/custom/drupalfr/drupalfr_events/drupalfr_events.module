@@ -6,7 +6,7 @@
 function drupalfr_events_theme() {
   return array(
     'dfr_events_listing' => array(
-      'variables' => array('display_mode' => NULL, 'events' => array()),
+      'variables' => array('display_mode' => NULL, 'events' => array(), 'venues' => ''),
       'template' => 'drupalfr-events-listing',
     ),
   );
@@ -20,7 +20,7 @@ function drupalfr_events_block_info() {
   return array(
     'next_events' => array(
       'info' => t('Prochains évènements Meetup'),
-      'cache' => DRUPAL_CACHE_GLOBAL,
+      'cache' => DRUPAL_NO_CACHE,
     ),
   );
 }
@@ -33,10 +33,18 @@ function drupalfr_events_block_view($delta = '') {
   switch($delta) {
     case 'next_events':
       $events = drupalfr_events_fetch_events(6);
+      // Build a list a venues.
+      $venues = array();
+      foreach ($events as $event) {
+        if (!empty($event['venue']['city'])) {
+          $venues[$event['venue']['city']] = $event['venue']['city'];
+        }
+      }
       $block = array(
         'subject' => t('6 prochains évènements meetup.com'),
         'content' => array(
           'events' => drupalfr_events_display_events($events, 'teaser'),
+          'venues' => drupal_render(drupal_get_form('drupalfr_venues_form', $venues)),
           'link' => array('#markup' => l(t("Programme détaillé"), 'prochains-evenements', array('attributes' => array('class'=>array('more-link')))))
         )
       );
@@ -59,9 +67,24 @@ function drupalfr_events_block_view($delta = '') {
 function drupalfr_events_display_events($events, $display_mode = 'teaser') {
   $content = array();
   if ($events) {
+    $venues = array();
+    foreach ($events as $event) {
+      if (!empty($event['venue']['city'])) {
+        $venues[$event['venue']['id']] = $event['venue']['city'];
+      }
+    }
+    $venues = drupal_render(drupal_get_form('drupalfr_venues_form', $venues));
     $content['#theme'] = 'dfr_events_listing';
     $content['#display_mode'] = $display_mode;
+    if (!empty($_GET['venues'])) {
+      foreach($events as $key => $event) {
+        if ($event['venue']['id'] != $_GET['venues']) {
+          unset($events[$key]);
+        }
+      }
+    }
     $content['#events'] = $events;
+    $content['#venues'] = $venues;
   }
   else {
     $content['#markup'] = "<p>Aucun évènement n'est prévu pour le moment.</p>";
@@ -94,7 +117,7 @@ function drupalfr_events_fetch_events($items = 5) {
     }
   }
   else {
-    watchdog('events_meetup', 'Error parsing the meetup feed. @reponse', array('@response' => $response));
+    watchdog('events_meetup', 'Error parsing the meetup feed. @response', array('@response' => $response));
     return FALSE;
   }
 }
@@ -126,14 +149,35 @@ function drupalfr_events_menu() {
  * Page callback for prochains-evenements.
  */
 function drupalfr_events_upcoming_events() {
-  if ($content = cache_get('upcoming-events-full')) {
+  $location = '0';
+  if (!empty($_GET['venues'])) {
+    $location = check_plain($_GET['venues']);
+  }
+  if ($content = cache_get('upcoming-events-full-' . $location)) {
     return $content->data;
   }
   else {
     $events = drupalfr_events_fetch_events(5);
     $content['events'] = drupalfr_events_display_events($events, 'full');
     $content['infos'] = array('#markup' => '<p>' . l('Voir tous les évènements', 'http://www.meetup.com/drupal-france-francophonie') . '</p>');
-    cache_set('upcoming-events-full', $content, 'cache', 3600);
+    cache_set('upcoming-events-full-' . $location, $content, 'cache', 3600);
     return $content;
   }
+}
+
+function drupalfr_venues_form($form, &$form_state, $venues) {
+  $form['venues'] = array(
+   '#type' => 'select',
+   '#title' => t('Filter par région'),
+   '#options' => array('0' => t('- Tous -')) + $venues,
+   '#default_value' => !empty($_GET['venues']) ? check_plain($_GET['venues']) : '0'
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Filtrer'),
+  );
+  $form['#method'] = 'GET';
+
+  return $form;
+
 }
